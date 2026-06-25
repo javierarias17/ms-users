@@ -1,4 +1,4 @@
-package co.com.pragma.model.user;
+package co.com.pragma.api.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -10,9 +10,8 @@ import lombok.Setter;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder(toBuilder = true)
-public class User {
-    private Long id;
+@Builder
+public class UserInDto {
     private String identificationNumber;
     private String name;
     private String email;
