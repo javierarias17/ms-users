@@ -2,6 +2,7 @@ package co.com.pragma.api;
 
 import co.com.pragma.api.dto.UserInDto;
 import co.com.pragma.api.mapper.UserMapper;
+import co.com.pragma.api.validator.ValidationHandler;
 import co.com.pragma.usecase.createuser.CreateUserUseCase;
 import co.com.pragma.usecase.getuser.GetUserUseCase;
 import lombok.RequiredArgsConstructor;
@@ -17,9 +18,11 @@ public class Handler {
     private final CreateUserUseCase createUserUseCase;
     private final GetUserUseCase getUserUseCase;
     private final UserMapper userMapper;
+    private final ValidationHandler validationHandler;
 
     public Mono<ServerResponse> createUser(ServerRequest request) {
         return request.bodyToMono(UserInDto.class)
+                .flatMap(validationHandler::validate)
                 .map(userMapper::toModel)
                 .flatMap(createUserUseCase::execute)
                 .map(userMapper::toResponse)
