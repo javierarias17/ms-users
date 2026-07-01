@@ -1,5 +1,6 @@
 server:
   port: ${SERVER_PORT}
+
 spring:
   application:
     name: "msUsers"
@@ -7,6 +8,7 @@ spring:
     add-properties: false
   profiles:
     active: "${SPRING_PROFILES_ACTIVE}"
+    
 management:
   endpoints:
     web:
@@ -16,5 +18,16 @@ management:
     health:
       probes:
         enabled: true
+
+adapters:
+  r2dbc:
+    host: ${DB_HOST}
+    port: ${DB_PORT}
+    database: ${DB_NAME}
+    schema: ${DB_SCHEMA}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    ssl-enabled: ${DB_SSL}
+
 cors:
   allowed-origins: "http://localhost:4200,http://localhost:8080"

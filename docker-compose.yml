@@ -1,0 +1,20 @@
+services:
+
+  ms-users:
+    container_name: ms-users
+    image: img_ms_users:latest
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile
+    ports:
+      - "8085:${SERVER_PORT}"
+    environment:
+      - SERVER_PORT=${SERVER_PORT}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_SCHEMA=${DB_SCHEMA}
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}
+      - DB_SSL=${DB_SSL}

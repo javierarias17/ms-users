@@ -1,0 +1,43 @@
+services:
+
+  ms-users:
+    container_name: ms-users
+    image: img_ms_users:latest
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile
+    ports:
+      - "8085:${SERVER_PORT}"
+    environment:
+      - SERVER_PORT=${SERVER_PORT}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_SCHEMA=${DB_SCHEMA}
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}
+      - DB_SSL=${DB_SSL}
+    depends_on:
+      ms_users_db:
+        condition: service_healthy
+
+  ms_users_db:
+    container_name: ms_users_db
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - db_data_ms_users:/var/lib/postgresql/data
+      - ./db_scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  db_data_ms_users:
