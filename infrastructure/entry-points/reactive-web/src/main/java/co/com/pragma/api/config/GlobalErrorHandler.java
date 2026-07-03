@@ -8,9 +8,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.support.WebExchangeBindException;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebExceptionHandler;
 import reactor.core.publisher.Mono;
@@ -84,6 +86,14 @@ public class GlobalErrorHandler implements WebExceptionHandler {
     }
 
     private Mono<Void> handleUnexpected(ServerWebExchange exchange, Throwable ex) {
+        if (ex instanceof ResponseStatusException rse) {
+            HttpStatusCode statusCode = rse.getStatusCode();
+            HttpStatus status = HttpStatus.resolve(statusCode.value());
+            if (status != null && !status.is5xxServerError()) {
+                String reason = rse.getReason() != null ? rse.getReason() : status.getReasonPhrase();
+                return writeResponse(exchange, status, Map.of(MESSAGE_KEY, reason));
+            }
+        }
         logger.error(UNEXPECTED_ERROR_LOG, ex.getMessage(), ex);
         return writeResponse(exchange, HttpStatus.INTERNAL_SERVER_ERROR,
                 Map.of(MESSAGE_KEY, UNEXPECTED_ERROR_MESSAGE));
