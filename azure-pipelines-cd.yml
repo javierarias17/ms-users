@@ -1,0 +1,67 @@
+# CD de ms-users
+#
+# Sigue el flujo "Azure pipelines CD" de infra-docs-reto2/Arquitectura V5:
+#   1. Update ECS service
+#   2. Send google message en caso de fallo
+#
+# Se dispara automáticamente cuando termina con éxito el pipeline de CI
+# (azure-pipelines-ci.yml) sobre la rama main.
+#
+# Requiere:
+# - Variable group 'aws-ecr-credentials' (igual que el CI).
+# - Variable group 'notifications' con: GOOGLE_CHAT_WEBHOOK_URL (secreto).
+# - Que en Azure DevOps exista un pipeline llamado 'ms-users-ci' apuntando
+#   a azure-pipelines-ci.yml (el nombre debe coincidir con "source" abajo).
+
+resources:
+  pipelines:
+    - pipeline: ciPipeline
+      source: ms-users-ci
+      trigger:
+        branches:
+          include:
+            - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: aws-ecr-credentials
+  - group: notifications
+
+steps:
+
+  - download: ciPipeline
+    artifact: image-uri
+    displayName: 'Descargar artefacto de imagen generado por el CI'
+
+  - script: |
+      IMAGE_URI=$(cat $(PIPELINE.WORKSPACE)/ciPipeline/image-uri/image-uri.txt)
+      echo "##vso[task.setvariable variable=imageUri]$IMAGE_URI"
+      echo "Imagen a desplegar: $IMAGE_URI"
+    displayName: 'Leer imagen a desplegar'
+
+  # 1. Update ECS service
+  #    Redespliega el stack con la nueva imagen; ms-users-stack.yaml ya
+  #    define el servicio ECS 'svc-ms-users' en el cluster 'cluster-ms-users'.
+  - script: |
+      aws cloudformation deploy \
+        --template-file ms-users-stack.yaml \
+        --stack-name ms-users-stack-dev \
+        --capabilities CAPABILITY_NAMED_IAM \
+        --region $(AWS_DEFAULT_REGION) \
+        --parameter-overrides \
+          ECRImageURI=$(imageUri) \
+          DesiredCount=1
+    displayName: 'Update ECS service'
+    env:
+      AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+      AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+
+  # 2. Send google message en caso de fallo
+  - script: |
+      curl -sf -X POST "$(GOOGLE_CHAT_WEBHOOK_URL)" \
+        -H 'Content-Type: application/json' \
+        -d "{\"text\": \"❌ Falló el despliegue de ms-users. Build: $(Build.BuildNumber). Ver: $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)\"}"
+    displayName: 'Notificar fallo en Google Chat'
+    condition: failed()
