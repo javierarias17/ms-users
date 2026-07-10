@@ -2,14 +2,18 @@
 #
 # Sigue el flujo "Azure pipelines CD" de infra-docs-reto2/Arquitectura V5:
 #   1. Update ECS service
-#   2. Send google message en caso de fallo
+#   2. Notificar en caso de fallo
 #
 # Se dispara automáticamente cuando termina con éxito el pipeline de CI
 # (azure-pipelines-ci.yml) sobre la rama main.
 #
+# El paso de notificación no depende de ningún webhook externo: se apoya
+# en las notificaciones nativas de Azure DevOps (Project Settings ->
+# Notifications -> "Build fails" -> agrega tu email como destinatario).
+# Ese step solo deja el detalle del fallo en el log del pipeline.
+#
 # Requiere:
 # - Variable group 'aws-ecr-credentials' (igual que el CI).
-# - Variable group 'notifications' con: GOOGLE_CHAT_WEBHOOK_URL (secreto).
 # - Que en Azure DevOps exista un pipeline llamado 'ms-users-ci' apuntando
 #   a azure-pipelines-ci.yml (el nombre debe coincidir con "source" abajo).
 
@@ -27,7 +31,6 @@ pool:
 
 variables:
   - group: aws-ecr-credentials
-  - group: notifications
 
 steps:
 
@@ -58,10 +61,10 @@ steps:
       AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
       AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
 
-  # 2. Send google message en caso de fallo
+  # 2. Notificar en caso de fallo (Azure DevOps envía el email nativo
+  #    configurado en Project Settings -> Notifications; este step solo
+  #    deja el detalle en el log para quien revise el pipeline)
   - script: |
-      curl -sf -X POST "$(GOOGLE_CHAT_WEBHOOK_URL)" \
-        -H 'Content-Type: application/json' \
-        -d "{\"text\": \"❌ Falló el despliegue de ms-users. Build: $(Build.BuildNumber). Ver: $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)\"}"
-    displayName: 'Notificar fallo en Google Chat'
+      echo "##vso[task.logissue type=error]Falló el despliegue de ms-users (Build $(Build.BuildNumber)). Revisa el paso 'Update ECS service'."
+    displayName: 'Registrar fallo de despliegue'
     condition: failed()
