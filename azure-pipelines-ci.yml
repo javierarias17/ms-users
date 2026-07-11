@@ -71,13 +71,17 @@ steps:
 
   # 4. Sonar (el plugin org.sonarqube de build.gradle recoge los parámetros
   #    que dejó SonarCloudPrepare en la variable de entorno SONARQUBE_SCANNER_PARAMS;
-  #    el projectKey se pasa aquí porque build.gradle no lo declara)
+  #    el projectKey se pasa aquí porque build.gradle no lo declara).
+  #    --no-configuration-cache: el plugin de Pitest (pitestReportAggregate,
+  #    dependencia de jacocoMergedReport) todavía no es compatible con la
+  #    Configuration Cache de Gradle activada en gradle.properties; se
+  #    desactiva solo para esta ejecución, sin tocar el archivo del proyecto.
   - task: Gradle@3
     displayName: 'Sonar'
     inputs:
       gradleWrapperFile: 'gradlew'
       tasks: 'jacocoMergedReport sonar'
-      options: '-Dsonar.projectKey=javierarias17_ms-users'
+      options: '-Dsonar.projectKey=javierarias17_ms-users --no-configuration-cache'
       publishJUnitResults: false
       jdkVersionOption: '1.21'
 
