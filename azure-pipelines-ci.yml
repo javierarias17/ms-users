@@ -43,12 +43,16 @@ variables:
 steps:
 
   # 1. Prepare sonar cloud
-  - task: SonarCloudPrepare@3
-    displayName: 'Prepare sonar cloud'
-    inputs:
-      SonarCloud: 'SonarCloudServiceConnection'
-      organization: 'javierarias17'
-      scannerMode: 'Other'
+  # Comentado temporalmente: el plan Free de SonarCloud no permite consultar
+  # el Quality Gate de ramas que no sean main (ver 403 "Organization is not
+  # allowed to access data from non main branches"). Se reactiva una vez que
+  # se pruebe desde main o vía análisis de PR.
+  # - task: SonarCloudPrepare@3
+  #   displayName: 'Prepare sonar cloud'
+  #   inputs:
+  #     SonarCloud: 'SonarCloudServiceConnection'
+  #     organization: 'javierarias17'
+  #     scannerMode: 'Other'
 
   # 2. Build
   - task: Gradle@3
@@ -69,27 +73,21 @@ steps:
       testResultsFiles: '**/build/test-results/test/*.xml'
       jdkVersionOption: '1.21'
 
-  # 4. Sonar (el plugin org.sonarqube de build.gradle recoge los parámetros
-  #    que dejó SonarCloudPrepare en la variable de entorno SONARQUBE_SCANNER_PARAMS;
-  #    el projectKey se pasa aquí porque build.gradle no lo declara).
-  #    --no-configuration-cache: el plugin de Pitest (pitestReportAggregate,
-  #    dependencia de jacocoMergedReport) todavía no es compatible con la
-  #    Configuration Cache de Gradle activada en gradle.properties; se
-  #    desactiva solo para esta ejecución, sin tocar el archivo del proyecto.
-  - task: Gradle@3
-    displayName: 'Sonar'
-    inputs:
-      gradleWrapperFile: 'gradlew'
-      tasks: 'jacocoMergedReport sonar'
-      options: '-Dsonar.projectKey=javierarias17_ms-users --no-configuration-cache'
-      publishJUnitResults: false
-      jdkVersionOption: '1.21'
+  # 4. Sonar - comentado temporalmente (ver nota en el paso 1)
+  # - task: Gradle@3
+  #   displayName: 'Sonar'
+  #   inputs:
+  #     gradleWrapperFile: 'gradlew'
+  #     tasks: 'jacocoMergedReport sonar'
+  #     options: '-Dsonar.projectKey=javierarias17_ms-users --no-configuration-cache'
+  #     publishJUnitResults: false
+  #     jdkVersionOption: '1.21'
 
-  # 5. Publish sonar (espera el resultado del Quality Gate en SonarCloud)
-  - task: SonarCloudPublish@3
-    displayName: 'Publish sonar'
-    inputs:
-      pollingTimeoutSec: '300'
+  # 5. Publish sonar - comentado temporalmente (ver nota en el paso 1)
+  # - task: SonarCloudPublish@3
+  #   displayName: 'Publish sonar'
+  #   inputs:
+  #     pollingTimeoutSec: '300'
 
   # 6. Build docker image
   - script: |
