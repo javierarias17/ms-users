@@ -1,0 +1,112 @@
+# CI de ms-users
+#
+# Pasos: Prepare sonar cloud -> Build -> Run tests -> Sonar -> Publish sonar -> Build docker image -> Publish docker image
+#
+# Se dispara con cada Pull Request hacia main y con cada push a main.
+#
+# Requiere:
+# - Extensión "SonarCloud" del Marketplace de Azure DevOps instalada en la
+#   organización, y una Service Connection de tipo SonarCloud llamada
+#   'SonarCloudServiceConnection'.
+# - Variable group 'aws-ecr-credentials' con: AWS_ACCESS_KEY_ID,
+#   AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION, ECR_REPOSITORY_URI
+#   (formato de ECR_REPOSITORY_URI: <account>.dkr.ecr.<region>.amazonaws.com/reto2/ms-users)
+
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: aws-ecr-credentials
+  - name: imageTag
+    value: '1.0.0-$(Build.BuildId)'
+
+steps:
+
+  # 1. Prepare sonar cloud
+  - task: SonarCloudPrepare@3
+    displayName: 'Prepare sonar cloud'
+    inputs:
+      SonarCloud: 'SonarCloudServiceConnection'
+      organization: 'javierarias17'
+      scannerMode: 'Other'
+
+  # 2. Build
+  - task: Gradle@3
+    displayName: 'Build'
+    inputs:
+      gradleWrapperFile: 'gradlew'
+      tasks: 'assemble -x test'
+      publishJUnitResults: false
+      jdkVersionOption: '1.21'
+
+  # 3. Run tests
+  - task: Gradle@3
+    displayName: 'Run tests'
+    inputs:
+      gradleWrapperFile: 'gradlew'
+      tasks: 'test'
+      publishJUnitResults: true
+      testResultsFiles: '**/build/test-results/test/*.xml'
+      jdkVersionOption: '1.21'
+
+  # 4. Sonar (el plugin org.sonarqube de build.gradle recoge los parámetros
+  #    que dejó SonarCloudPrepare en la variable de entorno SONARQUBE_SCANNER_PARAMS;
+  #    el projectKey se pasa aquí porque build.gradle no lo declara).
+  #    --no-configuration-cache: el plugin de Pitest (pitestReportAggregate,
+  #    dependencia de jacocoMergedReport) todavía no es compatible con la
+  #    Configuration Cache de Gradle activada en gradle.properties; se
+  #    desactiva solo para esta ejecución, sin tocar el archivo del proyecto.
+  - task: Gradle@3
+    displayName: 'Sonar'
+    inputs:
+      gradleWrapperFile: 'gradlew'
+      tasks: 'jacocoMergedReport sonar'
+      options: '-Dsonar.projectKey=javierarias17_ms-users --no-configuration-cache'
+      publishJUnitResults: false
+      jdkVersionOption: '1.21'
+
+  # 5. Publish sonar (espera el resultado del Quality Gate en SonarCloud)
+  - task: SonarCloudPublish@3
+    displayName: 'Publish sonar'
+    inputs:
+      pollingTimeoutSec: '300'
+
+  # 6. Build docker image
+  - script: |
+      docker build --platform linux/amd64 \
+        -f deployment/Dockerfile \
+        -t $(ECR_REPOSITORY_URI):$(imageTag) .
+    displayName: 'Build docker image'
+
+  # 7. Publish docker image
+  - script: |
+      aws ecr get-login-password --region $(AWS_DEFAULT_REGION) \
+        | docker login --username AWS --password-stdin $(ECR_REPOSITORY_URI)
+      docker push $(ECR_REPOSITORY_URI):$(imageTag)
+    displayName: 'Publish docker image'
+    env:
+      AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+      AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+
+  # Artefacto que consume el pipeline de CD para saber qué imagen desplegar
+  # (nodo "Artifacts" del diagrama, entre CI y CD)
+  - script: |
+      mkdir -p $(Build.ArtifactStagingDirectory)
+      echo "$(ECR_REPOSITORY_URI):$(imageTag)" > $(Build.ArtifactStagingDirectory)/image-uri.txt
+    displayName: 'Generar artefacto con la imagen a desplegar'
+
+  - task: PublishPipelineArtifact@1
+    displayName: 'Publish artifact'
+    inputs:
+      targetPath: '$(Build.ArtifactStagingDirectory)/image-uri.txt'
+      artifactName: 'image-uri'
