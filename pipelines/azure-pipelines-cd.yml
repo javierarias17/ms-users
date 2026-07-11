@@ -1,8 +1,6 @@
 # CD de ms-users
 #
-# Sigue el flujo "Azure pipelines CD" de infra-docs-reto2/Arquitectura V5:
-#   1. Update ECS service
-#   2. Notificar en caso de fallo
+# Pasos: Update ECS service -> Notificar en caso de fallo
 #
 # Se dispara automáticamente cuando termina con éxito el pipeline de CI
 # (azure-pipelines-ci.yml) sobre la rama main.
@@ -45,17 +43,33 @@ steps:
     displayName: 'Leer imagen a desplegar'
 
   # 1. Update ECS service
-  #    Redespliega el stack con la nueva imagen; ms-users-stack.yaml ya
-  #    define el servicio ECS 'svc-ms-users' en el cluster 'cluster-ms-users'.
+  #    Registra una nueva revisión de la Task Definition con la imagen nueva,
+  #    y actualiza el Service para que la use.
   - script: |
-      aws cloudformation deploy \
-        --template-file ms-users-stack.yaml \
-        --stack-name ms-users-stack-dev \
-        --capabilities CAPABILITY_NAMED_IAM \
+      aws ecs describe-task-definition \
+        --task-definition task-ms-users \
         --region $(AWS_DEFAULT_REGION) \
-        --parameter-overrides \
-          ECRImageURI=$(imageUri) \
-          DesiredCount=1
+        --query 'taskDefinition' > task-def.json
+
+      jq --arg IMAGE "$(imageUri)" '
+        (.containerDefinitions[] | select(.name == "ms-users") .image) = $IMAGE |
+        del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+      ' task-def.json > new-task-def.json
+
+      NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+        --cli-input-json file://new-task-def.json \
+        --region $(AWS_DEFAULT_REGION) \
+        --query 'taskDefinition.taskDefinitionArn' \
+        --output text)
+
+      echo "Nueva Task Definition: $NEW_TASK_DEF_ARN"
+
+      aws ecs update-service \
+        --cluster cluster-ms-users \
+        --service svc-ms-users \
+        --task-definition "$NEW_TASK_DEF_ARN" \
+        --region $(AWS_DEFAULT_REGION) \
+        --force-new-deployment
     displayName: 'Update ECS service'
     env:
       AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)

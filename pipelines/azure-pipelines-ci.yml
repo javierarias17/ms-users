@@ -1,17 +1,8 @@
 # CI de ms-users
 #
-# Sigue exactamente el flujo "Azure pipelines CI" definido en
-# infra-docs-reto2/Arquitectura V5:
-#   1. Prepare sonar cloud
-#   2. Build
-#   3. Run tests
-#   4. Sonar
-#   5. Publish sonar
-#   6. Build docker image
-#   7. Publish docker image
+# Pasos: Build -> Run tests -> Sonar -> Build docker image -> Publish docker image
 #
-# Se dispara con cada Pull Request hacia main y con cada push a main
-# (nodo "Pull request" -> "Trigger CI pipeline" del diagrama).
+# Se dispara con cada Pull Request hacia main y con cada push a main.
 #
 # Requiere:
 # - Extensión "SonarCloud" del Marketplace de Azure DevOps instalada en la
@@ -19,8 +10,7 @@
 #   'SonarCloudServiceConnection'.
 # - Variable group 'aws-ecr-credentials' con: AWS_ACCESS_KEY_ID,
 #   AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION, ECR_REPOSITORY_URI
-#   (ver infra-docs-reto2/commands-aws-cloudformation.txt para el formato
-#   de ECR_REPOSITORY_URI: <account>.dkr.ecr.<region>.amazonaws.com/reto2/ms-users)
+#   (formato de ECR_REPOSITORY_URI: <account>.dkr.ecr.<region>.amazonaws.com/reto2/ms-users)
 
 trigger:
   branches:
