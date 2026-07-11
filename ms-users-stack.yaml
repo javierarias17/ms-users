@@ -1,0 +1,615 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Infraestructura completa ms-users en us-east-1 con VPC personalizada
+
+# ─── PARAMETROS ───────────────────────────────────────────────────────────────
+Parameters:
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Default: sasa1234
+    Description: Contrasena para el usuario master postgres
+
+  DBAppPassword:
+    Type: String
+    NoEcho: true
+    Default: vaca1234
+    Description: Contrasena para ms_users_user
+
+  ECRImageURI:
+    Type: String
+    Description: URI completa de la imagen en ECR.
+    Default: public.ecr.aws/nginx/nginx:latest
+
+  DesiredCount:
+    Type: Number
+    Description: Numero de tareas ECS a correr.
+    Default: 1
+
+  AlertEmail:
+    Type: String
+    Default: javierarias17.dll@hotmail.com
+    Description: Email para recibir notificaciones de alarmas CloudWatch
+
+
+Resources:
+
+  # ─── VPC ──────────────────────────────────────────────────────────────────────
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: VPC-plataforma-ingreso
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # ─── SUBNETS PUBLICAS (ALB, NAT Gateway, RDS) ─────────────────────────────────
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: public-subnet-1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: public-subnet-2
+
+  # ─── SUBNETS PRIVADAS (ECS) ────────────────────────────────────────────────────
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: private-subnet-1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: private-subnet-2
+
+  # ─── TABLAS DE RUTAS ──────────────────────────────────────────────────────────
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ─── NAT GATEWAY ──────────────────────────────────────────────────────────────
+
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  # ─── SECURITY GROUPS ──────────────────────────────────────────────────────────
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: rds-ms-users-sg
+      GroupDescription: Acceso publico al RDS en puerto 5432
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: alb-ms-users-sg
+      GroupDescription: Trafico HTTP al ALB desde internet
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: ms-users-ecs-sg
+      GroupDescription: Security group for ECS ms-users
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8085
+          ToPort: 8085
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+  # ─── RDS ──────────────────────────────────────────────────────────────────────
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: sng-ms-users
+      DBSubnetGroupDescription: Subnet group para RDS ms-users
+      SubnetIds:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBInstanceIdentifier: rds-ms-users
+      DBInstanceClass: db.t3.micro
+      Engine: postgres
+      EngineVersion: "18"
+      MasterUsername: postgres
+      MasterUserPassword: !Ref DBPassword
+      AllocatedStorage: "20"
+      StorageType: gp2
+      PubliclyAccessible: true
+      MultiAZ: false
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt RDSSecurityGroup.GroupId
+      BackupRetentionPeriod: 0
+
+  # ─── SECRETS MANAGER ──────────────────────────────────────────────────────────
+
+  RDSSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: reto2/ms-users/db-credentials
+      Description: Credenciales de la base de datos ms-users
+      SecretString: !Sub '{"username":"ms_users_user","password":"${DBAppPassword}"}'
+
+  # ─── PARAMETER STORE ──────────────────────────────────────────────────────────
+
+  ParamServerPort:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /reto2/ms-users/SERVER_PORT
+      Type: String
+      Value: "8085"
+
+  ParamDBHost:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /reto2/ms-users/DB_HOST
+      Type: String
+      Value: !GetAtt RDSInstance.Endpoint.Address
+
+  ParamDBPort:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /reto2/ms-users/DB_PORT
+      Type: String
+      Value: "5432"
+
+  ParamDBName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /reto2/ms-users/DB_NAME
+      Type: String
+      Value: ms_users
+
+  ParamDBSchema:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /reto2/ms-users/DB_SCHEMA
+      Type: String
+      Value: ms_users
+
+  ParamDBSSL:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /reto2/ms-users/DB_SSL
+      Type: String
+      Value: "true"
+
+  ParamSpringProfile:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /reto2/ms-users/SPRING_PROFILES_ACTIVE
+      Type: String
+      Value: dev
+
+  # ─── ECR ──────────────────────────────────────────────────────────────────────
+
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: reto2/ms-users
+      ImageTagMutability: MUTABLE
+      EmptyOnDelete: true
+
+  # ─── IAM ──────────────────────────────────────────────────────────────────────
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: role-ecs-ms-users-virginia
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
+  # ─── ECS ──────────────────────────────────────────────────────────────────────
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: cluster-ms-users
+
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: task-ms-users
+      Cpu: "512"
+      Memory: "1024"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: ms-users
+          Image: !Ref ECRImageURI
+          PortMappings:
+            - ContainerPort: 8085
+              Protocol: tcp
+          Secrets:
+            - Name: SERVER_PORT
+              ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/reto2/ms-users/SERVER_PORT"
+            - Name: DB_HOST
+              ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/reto2/ms-users/DB_HOST"
+            - Name: DB_PORT
+              ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/reto2/ms-users/DB_PORT"
+            - Name: DB_NAME
+              ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/reto2/ms-users/DB_NAME"
+            - Name: DB_SCHEMA
+              ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/reto2/ms-users/DB_SCHEMA"
+            - Name: DB_SSL
+              ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/reto2/ms-users/DB_SSL"
+            - Name: SPRING_PROFILES_ACTIVE
+              ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/reto2/ms-users/SPRING_PROFILES_ACTIVE"
+            - Name: DB_USERNAME
+              ValueFrom: !Sub "${RDSSecret}:username::"
+            - Name: DB_PASSWORD
+              ValueFrom: !Sub "${RDSSecret}:password::"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /ecs/ms-users
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+              awslogs-create-group: "true"
+
+  # ─── ALB ──────────────────────────────────────────────────────────────────────
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: alb-ms-users
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: tg-ms-users
+      Port: 8085
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VPC
+      HealthCheckPath: /actuator/health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # ─── ECS SERVICE ──────────────────────────────────────────────────────────────
+
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn: ALBListener
+    Properties:
+      ServiceName: svc-ms-users
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref ECSTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+          SecurityGroups:
+            - !Ref ECSSecurityGroup
+      LoadBalancers:
+        - ContainerName: ms-users
+          ContainerPort: 8085
+          TargetGroupArn: !Ref TargetGroup
+
+  # ─── COGNITO ──────────────────────────────────────────────────────────────────
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: up-ms-users
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+
+  CognitoAppClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: ms-users-public
+      UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  # ─── API GATEWAY ──────────────────────────────────────────────────────────────
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: api-ms-users
+      ProtocolType: HTTP
+
+  CognitoAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref HttpApi
+      AuthorizerType: JWT
+      Name: cognito-authorizer
+      IdentitySource:
+        - "$request.header.Authorization"
+      JwtConfiguration:
+        Audience:
+          - !Ref CognitoAppClient
+        Issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}"
+
+  IntegrationPost:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: POST
+      IntegrationUri: !Sub "http://${ALB.DNSName}/api/v1/users"
+      PayloadFormatVersion: "1.0"
+
+  IntegrationGet:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: GET
+      IntegrationUri: !Sub "http://${ALB.DNSName}/api/v1/users/{id}"
+      PayloadFormatVersion: "1.0"
+
+  RoutePost:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /api/v1/users"
+      Target: !Sub "integrations/${IntegrationPost}"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoAuthorizer
+
+  RouteGet:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /api/v1/users/{id}"
+      Target: !Sub "integrations/${IntegrationGet}"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref CognitoAuthorizer
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: dev
+      AutoDeploy: true
+
+  # ─── SNS ──────────────────────────────────────────────────────────────────────
+
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: ms-users-alerts
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  # ─── CLOUDWATCH ALARMS ────────────────────────────────────────────────────────
+
+  Alarm5xxErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: ms-users-5xx-errors
+      AlarmDescription: Alarma para errores HTTP 5XX en el target group de ms-users
+      MetricName: HTTPCode_Target_5XX_Count
+      Namespace: AWS/ApplicationELB
+      Dimensions:
+        - Name: TargetGroup
+          Value: !GetAtt TargetGroup.TargetGroupFullName
+        - Name: LoadBalancer
+          Value: !GetAtt ALB.LoadBalancerFullName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  AlarmECSHighCPU:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: ms-users-high-cpu
+      AlarmDescription: Alarma cuando el CPU del contenedor ECS supera el 5%
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Dimensions:
+        - Name: ClusterName
+          Value: cluster-ms-users
+        - Name: ServiceName
+          Value: svc-ms-users
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+
+# ─── OUTPUTS ──────────────────────────────────────────────────────────────────
+Outputs:
+  RDSEndpoint:
+    Description: Endpoint del RDS - conectar con DBeaver y ejecutar rds-setup.sql
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  ECRRepositoryURI:
+    Description: URI del repositorio ECR - hacer push de la imagen aqui
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/reto2/ms-users"
+
+  APIGatewayURL:
+    Description: URL publica del API Gateway
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/dev"
+
+  CognitoUserPoolId:
+    Description: ID del User Pool de Cognito
+    Value: !Ref CognitoUserPool
+
+  CognitoClientId:
+    Description: Client ID del App Client
+    Value: !Ref CognitoAppClient
+
+  SNSTopicArn:
+    Description: ARN del topic SNS para alertas
+    Value: !Ref AlertsTopic
